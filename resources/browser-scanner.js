@@ -52,6 +52,42 @@
     function lineAt(content, idx) {
       return content.slice(0, idx).split('\n').length;
     }
+    function parseArchTag(content, matchIndex) {
+      const windowStr = content.slice(Math.max(0, matchIndex - 520), matchIndex);
+      const lastBoundary = Math.max(windowStr.lastIndexOf('}'), windowStr.lastIndexOf(';'));
+      const commentBlock = lastBoundary >= 0 ? windowStr.slice(lastBoundary + 1) : windowStr;
+      if (!/@arch\b/i.test(commentBlock)) return null;
+      const arch = {};
+      const compactMatch = /@arch\s*\[([^\]]+)\]\s*([^\n*]*)/i.exec(commentBlock);
+      if (compactMatch) {
+        for (const pair of compactMatch[1].split(',')) {
+          const [k, v] = pair.split('=').map((s) => s && s.trim());
+          if (k && v) arch[k.toLowerCase()] = v;
+        }
+        if (compactMatch[2] && compactMatch[2].trim()) arch.desc = compactMatch[2].trim();
+      }
+      const tagRegex = /@arch:(\w+)\s+([^\n\r*]+)/gi;
+      let tm;
+      while ((tm = tagRegex.exec(commentBlock)) !== null) {
+        const key = tm[1].toLowerCase();
+        const val = tm[2].trim();
+        if (key === 'container') {
+          const brk = /^(.+?)(?:\s*\[([^\]]+)\])?$/.exec(val);
+          arch.container = brk ? brk[1].trim() : val;
+          if (brk && brk[2]) arch.containerTech = brk[2].trim();
+        } else if (key === 'external') {
+          const brk = /^(.+?)(?:\s*\[([^\]]+)\])?$/.exec(val);
+          arch.external = { name: brk ? brk[1].trim() : val, tech: (brk && brk[2]) ? brk[2].trim() : 'External API' };
+        } else if (key === 'tier') {
+          arch.tier = parseInt(val, 10) || undefined;
+        } else if (key === 'role') {
+          arch.role = val.split(/[\s(]/)[0].trim().toLowerCase();
+        } else {
+          arch[key] = val;
+        }
+      }
+      return Object.keys(arch).length > 0 ? arch : null;
+    }
     function addNode(node) {
       if (!nodesMap.has(node.id)) {
         nodesMap.set(node.id, { ...node, metrics: { inDegree: 0, outDegree: 0, reuseCount: 0 } });
@@ -103,7 +139,7 @@
             }
           }
           const id = `db:${modelName}`;
-          addNode({ id, label: modelName, category: 'database', subType: 'Prisma Model', file: file.relPath, line: lineAt(c, m.index), details: { columns: cols, orm: 'Prisma' } });
+          addNode({ id, label: modelName, category: 'database', subType: 'Prisma Model', file: file.relPath, line: lineAt(c, m.index), details: { columns: cols, orm: 'Prisma', archTag: parseArchTag(c, m.index) } });
           symbolToNodeId.set(modelName, id);
         }
         rels.forEach((r) => {
@@ -116,7 +152,7 @@
         while ((m = sqlRegex.exec(c)) !== null) {
           const tName = m[1];
           const id = `db:${tName}`;
-          addNode({ id, label: tName, category: 'database', subType: 'SQL Table', file: file.relPath, line: lineAt(c, m.index), details: { columns: [], orm: 'SQL' } });
+          addNode({ id, label: tName, category: 'database', subType: 'SQL Table', file: file.relPath, line: lineAt(c, m.index), details: { columns: [], orm: 'SQL', archTag: parseArchTag(c, m.index) } });
           symbolToNodeId.set(tName, id);
         }
       }
@@ -156,7 +192,7 @@
           }
         }
 
-        addNode({ id, label: name, category: cat, subType: kind, file: file.relPath, line: lineAt(c, m.index), details: { extends: extList, implements: impList, members } });
+        addNode({ id, label: name, category: cat, subType: kind, file: file.relPath, line: lineAt(c, m.index), details: { extends: extList, implements: impList, members, archTag: parseArchTag(c, m.index) } });
         symbolToNodeId.set(name, id);
       }
 
@@ -165,14 +201,17 @@
         const fnName = m[1] || m[3];
         if (!fnName) continue;
         const isPascal = /^[A-Z]/.test(fnName);
-        if (isPascal && (isJSX || isScreen || isCompDir)) {
-          const cat = isScreen ? 'screen' : 'component';
+        const archTag = parseArchTag(c, m.index);
+        const taggedScreen = archTag && archTag.role === 'screen';
+        const taggedComp = archTag && (archTag.role === 'component' || archTag.role === 'ui-widget');
+        if (taggedScreen || taggedComp || (isPascal && (isJSX || isScreen || isCompDir))) {
+          const cat = taggedScreen ? 'screen' : taggedComp ? 'component' : (isScreen ? 'screen' : 'component');
           const id = `${cat}:${file.relPath}:${fnName}`;
-          addNode({ id, label: fnName, category: cat, subType: isScreen ? 'Tela / Página UI' : 'Componente Reutilizável UI', file: file.relPath, line: lineAt(c, m.index), details: {} });
+          addNode({ id, label: fnName, category: cat, subType: cat === 'screen' ? 'Tela / Página UI' : 'Componente Reutilizável UI', file: file.relPath, line: lineAt(c, m.index), details: { archTag } });
           symbolToNodeId.set(fnName, id);
         } else {
           const id = `fn:${file.relPath}:${fnName}`;
-          addNode({ id, label: `${fnName}()`, category: 'function', subType: 'Função Exportada', file: file.relPath, line: lineAt(c, m.index), details: {} });
+          addNode({ id, label: `${fnName}()`, category: 'function', subType: 'Função Exportada', file: file.relPath, line: lineAt(c, m.index), details: { archTag } });
           symbolToNodeId.set(fnName, id);
         }
       }

@@ -8,9 +8,33 @@
     const externals = [];
     const seen = new Set();
 
+    // 1. Priority: Explicit @arch:external tags written by repo-builder skill
+    for (const n of data.nodes) {
+      const arch = n.details && n.details.archTag;
+      if (arch && arch.external && arch.external.name) {
+        const key = arch.external.name.toLowerCase();
+        if (!seen.has(key)) {
+          seen.add(key);
+          externals.push({
+            id: `c4:ext:${key.replace(/[^a-z0-9]/g, '_')}`,
+            label: arch.external.name,
+            c4Type: 'External System',
+            tech: arch.external.tech || 'External API',
+            description: arch.desc || `Sistema externo integrado por ${n.label}.`,
+            color: '#334155',
+            borderColor: '#94a3b8',
+            linkedNodeId: n.id,
+            tier: 5,
+            containerGroup: 'external'
+          });
+        }
+      }
+    }
+
+    // 2. Fallback: Heuristic detection for legacy code without @arch tags
     for (const n of data.nodes) {
       const lbl = n.label || '';
-      if (/stripe/i.test(lbl) && !seen.has('stripe')) {
+      if (/stripe/i.test(lbl) && !seen.has('stripe') && !Array.from(seen).some((k) => k.includes('stripe'))) {
         seen.add('stripe');
         externals.push({
           id: 'c4:ext:stripe',
@@ -60,24 +84,43 @@
   }
 
   function formatShortC4Metadata(node) {
+    const arch = node.details && node.details.archTag;
+    const role = (arch && arch.role ? arch.role : '').toLowerCase();
     const cat = node.category;
     const sub = (node.subType || '').toLowerCase();
-    if (cat === 'screen') {
-      return { c4Type: 'Component: Screen', tech: 'React / TSX', tier: 1, group: 'webapp' };
+
+    let meta;
+    if (role === 'screen' || cat === 'screen') {
+      meta = { c4Type: 'Component: Screen', tech: 'React / TSX', tier: 1, group: 'webapp' };
+    } else if (role === 'component' || role === 'ui-widget' || cat === 'component') {
+      meta = { c4Type: 'Component: UI Widget', tech: 'React / TSX', tier: 2, group: 'webapp' };
+    } else if (role === 'adapter') {
+      meta = { c4Type: 'Component: Adapter', tech: 'TypeScript OOP', tier: 3, group: 'backend' };
+    } else if (role === 'service') {
+      meta = { c4Type: 'Component: Service', tech: 'TypeScript OOP', tier: 3, group: 'backend' };
+    } else if (role === 'utility' || cat === 'function') {
+      meta = { c4Type: 'Component: Utility Fn', tech: 'TS Module', tier: 3, group: 'backend' };
+    } else if (role === 'interface' || cat === 'interface') {
+      meta = { c4Type: 'Component: Interface', tech: 'TypeScript OOP', tier: 4, group: 'backend' };
+    } else if (role === 'abstract' || sub.includes('abstract')) {
+      meta = { c4Type: 'Component: Abstract', tech: 'TypeScript OOP', tier: 4, group: 'backend' };
+    } else {
+      meta = { c4Type: 'Component: Class', tech: 'TypeScript OOP', tier: 3, group: 'backend' };
     }
-    if (cat === 'component') {
-      return { c4Type: 'Component: UI Widget', tech: 'React / TSX', tier: 2, group: 'webapp' };
+
+    if (arch) {
+      if (arch.tier && Number(arch.tier) >= 1 && Number(arch.tier) <= 5) {
+        meta.tier = Number(arch.tier);
+      }
+      if (arch.containerTech) {
+        meta.tech = arch.containerTech;
+      }
+      if (arch.container) {
+        if (/web|front|ui|react/i.test(arch.container)) meta.group = 'webapp';
+        else if (/back|domain|service|api/i.test(arch.container)) meta.group = 'backend';
+      }
     }
-    if (cat === 'function') {
-      return { c4Type: 'Component: Utility Fn', tech: 'TS Module', tier: 3, group: 'backend' };
-    }
-    if (cat === 'interface') {
-      return { c4Type: 'Component: Interface', tech: 'TypeScript OOP', tier: 4, group: 'backend' };
-    }
-    if (sub.includes('abstract')) {
-      return { c4Type: 'Component: Abstract', tech: 'TypeScript OOP', tier: 4, group: 'backend' };
-    }
-    return { c4Type: 'Component: Class', tech: 'TypeScript OOP', tier: 3, group: 'backend' };
+    return meta;
   }
 
   function buildC4Graph(data, level, containerFilter) {
@@ -290,6 +333,7 @@
       const isOOP = n.category === 'class' || n.category === 'interface';
       const meta = formatShortC4Metadata(n);
       const shortFile = `${n.file}:${n.line || 1}`;
+      const archDesc = n.details && n.details.archTag && n.details.archTag.desc;
 
       nodes.push({
         id: n.id,
@@ -297,11 +341,11 @@
         c4Type: meta.c4Type,
         tech: meta.tech,
         fileBadge: shortFile,
-        description: isOOP
+        description: archDesc || (isOOP
           ? `Componente de domínio OOP. Duplo-clique para abrir UML (C4-L4).`
           : isUI
             ? `Componente visual UI reutilizado ${n.metrics ? n.metrics.reuseCount : 0}x nas telas.`
-            : `Função utilitária exportada e compartilhada entre módulos.`,
+            : `Função utilitária exportada e compartilhada entre módulos.`),
         color: n.category === 'screen'
           ? '#1e3a8a'
           : isUI

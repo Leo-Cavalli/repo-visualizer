@@ -83,19 +83,19 @@ repo-visualizer/
 
 ### Opção 1: Via `npx skills` (Recomendado — Funciona em múltiplos agentes)
 ```bash
-npx skills add LeoCardoso01/repo-visualizer
+npx skills add Leo-Cavalli/repo-visualizer
 ```
 
 ### Opção 2: Via `git clone` direto na pasta de Skills da sua IA
 
 - **Google Antigravity / Cursor / Windsurf / Agentes padrão `.agents`:**
   ```bash
-  git clone https://github.com/LeoCardoso01/repo-visualizer.git ~/.agents/skills/repo-visualizer
+  git clone https://github.com/Leo-Cavalli/repo-visualizer.git ~/.agents/skills/repo-visualizer
   ```
 
 - **Gemini CLI:**
   ```bash
-  git clone https://github.com/LeoCardoso01/repo-visualizer.git ~/.gemini/skills/repo-visualizer
+  git clone https://github.com/Leo-Cavalli/repo-visualizer.git ~/.gemini/skills/repo-visualizer
   ```
 
 ---

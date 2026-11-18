@@ -50,6 +50,59 @@ function getLineNumber(content, index) {
   return content.slice(0, index).split('\n').length;
 }
 
+/**
+ * Parses @arch:* tags written by the repo-builder skill immediately above a declaration.
+ */
+function parseArchTag(content, matchIndex) {
+  const windowStr = content.slice(Math.max(0, matchIndex - 520), matchIndex);
+  // Look only at the comment block right before the symbol (after any previous closing brace or semicolon)
+  const lastBoundary = Math.max(windowStr.lastIndexOf('}'), windowStr.lastIndexOf(';'));
+  const commentBlock = lastBoundary >= 0 ? windowStr.slice(lastBoundary + 1) : windowStr;
+  if (!/@arch\b/i.test(commentBlock)) return null;
+
+  const arch = {};
+
+  // 1. Check 1-line compact format: @arch [role=..., container=..., tier=...] Description
+  const compactMatch = /@arch\s*\[([^\]]+)\]\s*([^\n*]*)/i.exec(commentBlock);
+  if (compactMatch) {
+    const kvPairs = compactMatch[1].split(',');
+    for (const pair of kvPairs) {
+      const [k, v] = pair.split('=').map(s => s && s.trim());
+      if (k && v) arch[k.toLowerCase()] = v;
+    }
+    if (compactMatch[2] && compactMatch[2].trim()) {
+      arch.desc = compactMatch[2].trim();
+    }
+  }
+
+  // 2. Check multi-line @arch:key value tags
+  const tagRegex = /@arch:(\w+)\s+([^\n\r*]+)/gi;
+  let m;
+  while ((m = tagRegex.exec(commentBlock)) !== null) {
+    const key = m[1].toLowerCase();
+    const val = m[2].trim();
+    if (key === 'container') {
+      const brk = /^(.+?)(?:\s*\[([^\]]+)\])?$/.exec(val);
+      arch.container = brk ? brk[1].trim() : val;
+      if (brk && brk[2]) arch.containerTech = brk[2].trim();
+    } else if (key === 'external') {
+      const brk = /^(.+?)(?:\s*\[([^\]]+)\])?$/.exec(val);
+      arch.external = {
+        name: brk ? brk[1].trim() : val,
+        tech: (brk && brk[2]) ? brk[2].trim() : 'External API'
+      };
+    } else if (key === 'tier') {
+      arch.tier = parseInt(val, 10) || undefined;
+    } else if (key === 'role') {
+      arch.role = val.split(/[\s(]/)[0].trim().toLowerCase();
+    } else {
+      arch[key] = val;
+    }
+  }
+
+  return Object.keys(arch).length > 0 ? arch : null;
+}
+
 function analyzeRepository(repoRoot) {
   const absRoot = path.resolve(repoRoot);
   const files = walkDir(absRoot);
@@ -291,7 +344,7 @@ function parsePrismaSchema(content, file, addNode, addEdge, symbolToNodeId) {
       subType: 'Prisma Model',
       file: file.relPath,
       line,
-      details: { columns, orm: 'Prisma' }
+      details: { columns, orm: 'Prisma', archTag: parseArchTag(content, match.index) }
     });
     symbolToNodeId.set(modelName, nodeId);
   }
@@ -360,7 +413,7 @@ function parseSqlSchema(content, file, addNode, addEdge, symbolToNodeId) {
       subType: 'SQL Table',
       file: file.relPath,
       line,
-      details: { columns, orm: 'SQL' }
+      details: { columns, orm: 'SQL', archTag: parseArchTag(content, match.index) }
     });
     symbolToNodeId.set(tableName, nodeId);
   }
@@ -506,6 +559,7 @@ function parseClassesAndOOP(content, file, addNode, addEdge, symbolToNodeId) {
         implements: parseTypeList(implementsClause),
         csharpBases: parseTypeList(csharpColonClause),
         members,
+        archTag: parseArchTag(content, match.index),
         encapsulationSummary: {
           public: members.filter(m => m.visibility === 'public').length,
           protected: members.filter(m => m.visibility === 'protected').length,
@@ -601,21 +655,25 @@ function parseFunctionsAndUI(content, file, isScreen, isComponentDir, addNode, a
     const isPascalCase = /^[A-Z]/.test(fnName);
     const line = getLineNumber(content, match.index);
 
-    if (isPascalCase && (isJSXFile || isScreen || isComponentDir)) {
-      const category = isScreen ? 'screen' : 'component';
+    const archTag = parseArchTag(content, match.index);
+    const taggedScreen = archTag && archTag.role === 'screen';
+    const taggedComp = archTag && (archTag.role === 'component' || archTag.role === 'ui-widget');
+
+    if (taggedScreen || taggedComp || (isPascalCase && (isJSXFile || isScreen || isComponentDir))) {
+      const category = taggedScreen ? 'screen' : taggedComp ? 'component' : (isScreen ? 'screen' : 'component');
       const nodeId = `${category}:${file.relPath}:${fnName}`;
       addNode({
         id: nodeId,
         label: fnName,
         category,
-        subType: isScreen ? 'Tela / Página UI' : 'Componente Reutilizável UI',
+        subType: category === 'screen' ? 'Tela / Página UI' : 'Componente Reutilizável UI',
         file: file.relPath,
         line,
-        details: { propsRaw: (match[2] || match[4] || '').trim() }
+        details: { propsRaw: (match[2] || match[4] || '').trim(), archTag }
       });
       symbolToNodeId.set(fnName, nodeId);
       foundAnyInFile = true;
-    } else if (match[0].startsWith('export') || !isJSXFile) {
+    } else if (match[0].startsWith('export') || !isJSXFile || archTag) {
       const nodeId = `fn:${file.relPath}:${fnName}`;
       addNode({
         id: nodeId,
@@ -624,7 +682,7 @@ function parseFunctionsAndUI(content, file, isScreen, isComponentDir, addNode, a
         subType: 'Função Exportada',
         file: file.relPath,
         line,
-        details: { params: (match[2] || match[4] || '').trim() }
+        details: { params: (match[2] || match[4] || '').trim(), archTag }
       });
       symbolToNodeId.set(fnName, nodeId);
       foundAnyInFile = true;
