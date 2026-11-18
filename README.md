@@ -21,6 +21,37 @@ O `repo-visualizer` é uma **Skill Open Source para Agentes de IA** (Google Anti
   - **Todas** as caixas de linha tracejada da ferramenta (`[Enterprise Scope]`, `[System Boundary]`, `[Container Boundary]`, `[Data Boundary]` no DER e `[Code Boundary]` no UML) possuem **8 alças interativas de redimensionamento** (4 cantos + 4 laterais) e **barra de cabeçalho arrastável** para você ajustar o tamanho e a posição das fronteiras livremente com o mouse.
 - **⚡ Arquitetura Modular Leve (100% compatível com `file://` sem CORS):**
   - O template monolítico foi substituído por módulos independentes e ultra-rápidos (`arch-dashboard.html`, `styles.css`, `arch-data.js`, `svg-engine.js`, `c4-engine.js`, `browser-scanner.js` e `app.js`).
+- **🤝 Integração Nativa com a Skill [`repo-builder`](https://github.com/Leo-Cavalli/repo-builder) (Protocolo `@arch`):**
+  - Suporte nativo em $O(1)$ para leitura das tags arquiteturais `@arch:*` inseridas pela IA em tempo de escrita, economizando até **90% de tokens** e eliminando qualquer ambiguidade nos diagramas C4.
+
+---
+
+## 🤝 Integração Simbiótica com a Skill [`repo-builder`](https://github.com/Leo-Cavalli/repo-builder)
+
+O `repo-visualizer` funciona em qualquer repositório legado sem precisar alterar uma única linha de código. Porém, quando utilizado em conjunto com a skill companheira **[`repo-builder`](https://github.com/Leo-Cavalli/repo-builder)**, ambos formam um ciclo completo de **Escrita + Auditoria Visual (*Write-Time + Read-Time*)**:
+
+1. **Enquanto a IA escreve o código (`repo-builder`):**
+   - Ela insere anotações ultra-leves `@arch:*` nos comentários nativos da linguagem (JSDoc/TSDoc, Docstrings, Prisma `///` ou SQL `--`) acima de classes, telas, componentes UI, funções e tabelas:
+     ```typescript
+     /**
+      * @arch:container Domain & Application Services (Backend) [TypeScript / OOP]
+      * @arch:role adapter
+      * @arch:tier 3
+      * @arch:external Stripe Payment Gateway [REST API / Webhooks]
+      * @arch:desc Processa cobranças de cartão e valida webhooks de pagamento via Stripe.
+      */
+     export class StripeGatewayAdapter extends BaseEntity implements IPaymentGateway { ... }
+     ```
+2. **Quando você abre o `repo-visualizer`:**
+   - **Zero Adivinhação:** O analisador (`analyze_repo.cjs` e `browser-scanner.js`) lê as tags `@arch:*` prioritariamente, posicionando cada componente exatamente no **Contêiner (C2)** e na **Camada Topológica (C3)** declarados.
+   - **Sistemas Externos Reais no C1 e C2:** Qualquer `@arch:external` declarado no código vira automaticamente um nó de **Sistema Externo** conectado com seu protocolo real nos diagramas de Contexto (C1) e Contêineres (C2).
+   - **Descrições de Negócio Reais:** O texto de `@arch:desc` aparece diretamente dentro das caixas do Diagrama C4, no Inspetor Lateral e nas tabelas da documentação **arc42 (Aba 5)**.
+
+> 💡 **Instale a dupla completa:**
+> ```bash
+> npx skills add Leo-Cavalli/repo-builder
+> npx skills add Leo-Cavalli/repo-visualizer
+> ```
 
 ---
 
