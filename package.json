@@ -1,0 +1,29 @@
+{
+  "name": "repo-visualizer-skill",
+  "version": "1.0.0",
+  "description": "AI Agent Skill & Interactive Web Dashboard for Visual Code Auditing, ER Database Diagrams, UML Class Diagrams, UI Component Reuse Tracking, and arc42 Documentation (Markdown + PDF Export).",
+  "license": "MIT",
+  "bin": {
+    "repo-visualizer": "./scripts/analyze_repo.cjs",
+    "repo-visualizer-serve": "./scripts/serve_dashboard.cjs"
+  },
+  "scripts": {
+    "analyze": "node ./scripts/analyze_repo.cjs",
+    "serve": "node ./scripts/serve_dashboard.cjs"
+  },
+  "keywords": [
+    "ai-skill",
+    "agent-skills",
+    "gemini-cli",
+    "antigravity",
+    "claude-code",
+    "architecture",
+    "uml",
+    "er-diagram",
+    "arc42",
+    "code-audit"
+  ],
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}
