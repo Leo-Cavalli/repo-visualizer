@@ -863,6 +863,37 @@ ${[...dbNodes, ...classNodes, ...compNodes].slice(0, 20).map(n => `| **${n.label
 // MAIN CLI ENTRYPOINT
 // ============================================================================
 
+function writeVisualizerOutput(absRepo, data) {
+  const outDir = path.join(absRepo, '.arch-visualizer');
+  fs.mkdirSync(outDir, { recursive: true });
+
+  const jsonPath = path.join(outDir, 'arch-data.json');
+  fs.writeFileSync(jsonPath, JSON.stringify(data, null, 2), 'utf8');
+
+  const jsDataPath = path.join(outDir, 'arch-data.js');
+  fs.writeFileSync(jsDataPath, `window.__ARCH_DATA__ = ${JSON.stringify(data, null, 2)};\n`, 'utf8');
+
+  const resDir = path.join(__dirname, '..', 'resources');
+  const assetFiles = [
+    { src: 'dashboard-template.html', dest: 'arch-dashboard.html' },
+    { src: 'styles.css', dest: 'styles.css' },
+    { src: 'svg-engine.js', dest: 'svg-engine.js' },
+    { src: 'c4-engine.js', dest: 'c4-engine.js' },
+    { src: 'browser-scanner.js', dest: 'browser-scanner.js' },
+    { src: 'app.js', dest: 'app.js' }
+  ];
+
+  for (const asset of assetFiles) {
+    const srcPath = path.join(resDir, asset.src);
+    const destPath = path.join(outDir, asset.dest);
+    if (fs.existsSync(srcPath)) {
+      fs.copyFileSync(srcPath, destPath);
+    }
+  }
+
+  console.log(`[repo-visualizer] Dashboard modular gerado em: ${path.join(outDir, 'arch-dashboard.html')}`);
+}
+
 function main() {
   const targetRepo = process.argv[2] || process.cwd();
   const absRepo = path.resolve(targetRepo);
@@ -874,25 +905,7 @@ function main() {
 
   console.log(`[repo-visualizer] Analisando repositório: ${absRepo} ...`);
   const data = analyzeRepository(absRepo);
-
-  const outDir = path.join(absRepo, '.arch-visualizer');
-  fs.mkdirSync(outDir, { recursive: true });
-
-  const jsonPath = path.join(outDir, 'arch-data.json');
-  fs.writeFileSync(jsonPath, JSON.stringify(data, null, 2), 'utf8');
-
-  const templatePath = path.join(__dirname, '..', 'resources', 'dashboard-template.html');
-  if (fs.existsSync(templatePath)) {
-    const templateHtml = fs.readFileSync(templatePath, 'utf8');
-    const safeJson = JSON.stringify(data).replace(/<\/script>/gi, '<\\/script>');
-    const finalHtml = templateHtml.replace('/*__ARCH_DATA_PLACEHOLDER__*/', `window.__ARCH_DATA__ = ${safeJson};`);
-    const htmlPath = path.join(outDir, 'arch-dashboard.html');
-    fs.writeFileSync(htmlPath, finalHtml, 'utf8');
-    console.log(`[repo-visualizer] Dashboard HTML gerado com sucesso em: ${htmlPath}`);
-  } else {
-    console.warn(`[repo-visualizer] Template HTML não encontrado em: ${templatePath}`);
-  }
-
+  writeVisualizerOutput(absRepo, data);
   console.log(`[repo-visualizer] Resumo da extração:`, JSON.stringify(data.summary.counts, null, 2));
 }
 
@@ -900,4 +913,4 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { analyzeRepository };
+module.exports = { analyzeRepository, writeVisualizerOutput };

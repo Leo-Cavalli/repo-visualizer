@@ -9,10 +9,17 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
-const { analyzeRepository } = require('./analyze_repo.cjs');
+const { analyzeRepository, writeVisualizerOutput } = require('./analyze_repo.cjs');
 
 const repoRoot = path.resolve(process.argv[2] || process.cwd());
 const port = parseInt(process.argv[3] || '4242', 10);
+
+const MIME_TYPES = {
+  '.html': 'text/html; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.js': 'application/javascript; charset=utf-8',
+  '.json': 'application/json; charset=utf-8'
+};
 
 function sendJson(res, status, payload) {
   res.writeHead(status, {
@@ -34,14 +41,16 @@ const server = http.createServer((req, res) => {
     return res.end();
   }
 
-  if (req.method === 'GET' && (req.url === '/' || req.url.startsWith('/index.html'))) {
-    const htmlPath = path.join(repoRoot, '.arch-visualizer', 'arch-dashboard.html');
-    if (!fs.existsSync(htmlPath)) {
-      return sendJson(res, 404, { error: 'Dashboard ainda não gerado. Execute analyze_repo.cjs primeiro.' });
+  if (req.method === 'GET' && !req.url.startsWith('/api/')) {
+    const cleanUrl = req.url.split('?')[0];
+    const fileName = (cleanUrl === '/' || cleanUrl === '/index.html') ? 'arch-dashboard.html' : path.basename(cleanUrl);
+    const filePath = path.join(repoRoot, '.arch-visualizer', fileName);
+    if (!fs.existsSync(filePath)) {
+      return sendJson(res, 404, { error: `Arquivo não encontrado: ${fileName}` });
     }
-    const html = fs.readFileSync(htmlPath, 'utf8');
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-    return res.end(html);
+    const ext = path.extname(fileName).toLowerCase();
+    res.writeHead(200, { 'Content-Type': MIME_TYPES[ext] || 'text/plain; charset=utf-8' });
+    return res.end(fs.readFileSync(filePath));
   }
 
   if (req.method === 'GET' && req.url === '/api/data') {
@@ -76,9 +85,7 @@ const server = http.createServer((req, res) => {
   if (req.method === 'POST' && req.url === '/api/rescan') {
     try {
       const data = analyzeRepository(repoRoot);
-      const outDir = path.join(repoRoot, '.arch-visualizer');
-      fs.mkdirSync(outDir, { recursive: true });
-      fs.writeFileSync(path.join(outDir, 'arch-data.json'), JSON.stringify(data, null, 2), 'utf8');
+      writeVisualizerOutput(repoRoot, data);
       return sendJson(res, 200, { ok: true, data });
     } catch (err) {
       return sendJson(res, 500, { error: err.message });
