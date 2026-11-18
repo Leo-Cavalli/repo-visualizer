@@ -1,7 +1,7 @@
 {
   "name": "repo-visualizer-skill",
-  "version": "1.0.0",
-  "description": "AI Agent Skill & Interactive Web Dashboard for Visual Code Auditing, ER Database Diagrams, UML Class Diagrams, UI Component Reuse Tracking, and arc42 Documentation (Markdown + PDF Export).",
+  "version": "1.1.0",
+  "description": "AI Agent Skill & Modular Interactive Web Dashboard for Visual Code Auditing, C4 Model Architecture Generator (C1-C4), ER Database Diagrams (DER), UML Class Diagrams, UI Component Reuse Tracking, and arc42 Documentation (Markdown + PDF Export).",
   "license": "MIT",
   "bin": {
     "repo-visualizer": "./scripts/analyze_repo.cjs",
@@ -18,6 +18,7 @@
     "antigravity",
     "claude-code",
     "architecture",
+    "c4-model",
     "uml",
     "er-diagram",
     "arc42",
