@@ -149,6 +149,10 @@ function initDashboard() {
 
 function renderKPIs() {
   const c = state.data.summary.counts || {};
+  const inc = state.data.summary.incremental;
+  const incPill = inc
+    ? `<div class="kpi-pill" title="Motor Incremental @arch:status (Cache Hit vs Reanalisados)">⚡ Cache: <strong>${inc.cachedFiles}</strong> lidos / <strong>${inc.analyzedFiles}</strong> atua.</div>`
+    : '';
   document.getElementById('kpi-strip').innerHTML = `
     <div class="kpi-pill">🗄️ Tabelas DB: <strong>${c.tables || 0}</strong></div>
     <div class="kpi-pill">🧬 Classes/Interfaces: <strong>${c.classes || 0}</strong></div>
@@ -157,6 +161,7 @@ function renderKPIs() {
     <div class="kpi-pill">⚡ Funções: <strong>${c.functions || 0}</strong></div>
     <div class="kpi-pill">🔗 Conexões: <strong>${c.edges || 0}</strong></div>
     <div class="kpi-pill">🛡️ Alertas: <strong>${c.findings || 0}</strong></div>
+    ${incPill}
   `;
 }
 
@@ -406,11 +411,20 @@ function renderC4View() {
     const descY1 = n.fileBadge ? -hh + 72 : -hh + 64;
     const descY2 = n.fileBadge ? -hh + 86 : -hh + 80;
 
+    const syncState = n.originalNode && n.originalNode.syncState;
+    const syncBadge = (syncState === 'new' || syncState === 'modified')
+      ? `<g transform="translate(${hw - 36}, ${-hh - 8})">
+           <rect x="-26" y="-9" width="52" height="17" rx="8" fill="${syncState === 'new' ? '#10b981' : '#f59e0b'}" stroke="#0b0f19" stroke-width="1.5" />
+           <text x="0" y="3" fill="#052e16" font-size="8.5" font-weight="800" text-anchor="middle" style="pointer-events:none;">${syncState === 'new' ? '🆕 NOVO' : '✏️ MOD'}</text>
+         </g>`
+      : '';
+
     nodesSvg += `
       <g class="graph-node" data-id="${escapeHtml(n.id)}" transform="translate(${pos.x}, ${pos.y})" style="cursor:grab;">
         ${personHead}
         <rect x="${-hw}" y="${-hh}" width="${w}" height="${h}" rx="${n.isDatabase ? 18 : 10}"
               fill="${n.color}" stroke="${isSelected ? '#ffffff' : n.borderColor}" stroke-width="${isSelected ? 3.5 : 2}" />
+        ${syncBadge}
         <g clip-path="url(#c4-card-clip)" style="pointer-events:none; user-select:none;">
           <text x="0" y="${-hh + 22}" fill="#ffffff" font-size="13" font-weight="800" text-anchor="middle">
             ${drillIcon}${escapeHtml(n.label.slice(0, 26))}
@@ -638,14 +652,26 @@ function selectNode(nodeId) {
     `;
   }
 
+  const archTag = realNode.details && realNode.details.archTag;
+  const syncBadgeHtml = realNode.syncState === 'cached'
+    ? `<span class="badge badge-component">⚡ Cache (read)</span>`
+    : realNode.syncState === 'new' || realNode.syncState === 'modified'
+      ? `<span class="badge badge-db">${realNode.syncState === 'new' ? '🆕 Novo → read' : '✏️ Modificado → read'}</span>`
+      : '';
+  const archDescHtml = archTag && archTag.desc
+    ? `<p style="font-size:12px; color:#cbd5e1; margin:8px 0 6px;">🏷️ ${escapeHtml(archTag.desc)}</p>`
+    : '';
+
   inspector.innerHTML = `
     <div class="inspector-card">
       <h3>Elemento Selecionado</h3>
       <div style="font-size:16px; font-weight:700; margin-bottom:6px;">${escapeHtml(realNode.label)}</div>
-      <div style="margin-bottom:10px;">
+      <div style="margin-bottom:10px; display:flex; flex-wrap:wrap; gap:4px;">
         <span class="badge badge-screen">${escapeHtml(realNode.subType || realNode.category)}</span>
         ${realNode.metrics && realNode.metrics.reuseCount ? `<span class="badge badge-component">Reutilizado ${realNode.metrics.reuseCount}x</span>` : ''}
+        ${syncBadgeHtml}
       </div>
+      ${archDescHtml}
       <div class="file-loc">📍 Arquivo: ${escapeHtml(realNode.file)} (Linha ${realNode.line || 1})</div>
     </div>
     ${detailsHtml}

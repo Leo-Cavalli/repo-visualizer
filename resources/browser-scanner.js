@@ -6,7 +6,7 @@
   const BROWSER_IGNORE_DIRS = new Set([
     'node_modules', '.git', '.next', 'dist', 'build', 'out', 'coverage',
     '.arch-visualizer', '.venv', 'venv', '__pycache__', 'target', 'bin', 'obj',
-    '.idea', '.vscode', '.gradle'
+    '.idea', '.vscode', '.gradle', '.agents', '.gemini', 'skills'
   ]);
   const BROWSER_EXTS = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.java', '.cs', '.py', '.prisma', '.sql', '.md']);
 

@@ -11,11 +11,12 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 const IGNORE_DIRS = new Set([
   'node_modules', '.git', '.next', 'dist', 'build', 'out', 'coverage',
   '.arch-visualizer', '.venv', 'venv', '__pycache__', 'target', 'bin', 'obj',
-  '.idea', '.vscode', '.gradle'
+  '.idea', '.vscode', '.gradle', '.agents', '.gemini', 'skills'
 ]);
 
 const CODE_EXTENSIONS = new Set([
@@ -103,9 +104,57 @@ function parseArchTag(content, matchIndex) {
   return Object.keys(arch).length > 0 ? arch : null;
 }
 
-function analyzeRepository(repoRoot) {
+function sha256(content) {
+  return crypto.createHash('sha256').update(String(content || ''), 'utf8').digest('hex').slice(0, 16);
+}
+
+function hasPendingOrModifiedArchStatus(content) {
+  return /@arch:status\s+(pending|modified)\b/i.test(content) ||
+    /@arch\s*\[[^\]]*\bstatus\s*=\s*(pending|modified)\b/i.test(content);
+}
+
+function markArchStatusAsRead(content) {
+  let count = 0;
+  let updated = content.replace(/(@arch:status\s+)(pending|modified)\b/gi, (_, prefix) => {
+    count++;
+    return `${prefix}read`;
+  });
+  updated = updated.replace(/(@arch\s*\[[^\]]*\bstatus\s*=\s*)(pending|modified)\b/gi, (_, prefix) => {
+    count++;
+    return `${prefix}read`;
+  });
+  return { updatedContent: updated, count };
+}
+
+function loadPreviousFileIndex(absRoot) {
+  try {
+    const prevPath = path.join(absRoot, '.arch-visualizer', 'arch-data.json');
+    if (!fs.existsSync(prevPath)) return {};
+    const parsed = JSON.parse(fs.readFileSync(prevPath, 'utf8'));
+    return (parsed && parsed.fileIndex) || {};
+  } catch (e) {
+    return {};
+  }
+}
+
+function analyzeRepository(repoRoot, options = {}) {
   const absRoot = path.resolve(repoRoot);
+  const markRead = options.markRead !== false;
+  const forceFullScan = Boolean(options.forceFullScan);
   const files = walkDir(absRoot);
+
+  const prevFileIndex = forceFullScan ? {} : loadPreviousFileIndex(absRoot);
+  const newFileIndex = {};
+  const cachedFileEdges = new Map(); // relPath -> Edge[]
+  const dirtyFiles = new Set(); // relPath of newly analyzed / modified files
+  const fileContentsMap = new Map(); // relPath -> { content, hash }
+
+  const incrementalStats = {
+    cachedFiles: 0,
+    analyzedFiles: 0,
+    tagsMarkedRead: 0,
+    updatedNodeIds: []
+  };
 
   const nodesMap = new Map();
   const edges = [];
@@ -141,6 +190,45 @@ function analyzeRepository(repoRoot) {
   const symbolToNodeId = new Map(); // SymbolName -> nodeId
   const fileToModuleNodeId = new Map(); // relPath -> nodeId
 
+  function hydrateFromCache(file, prevEntry) {
+    incrementalStats.cachedFiles++;
+    for (const cachedNode of (prevEntry.nodes || [])) {
+      const cloned = JSON.parse(JSON.stringify(cachedNode));
+      cloned.metrics = { inDegree: 0, outDegree: 0, reuseCount: 0 };
+      cloned.syncState = 'cached';
+      addNode(cloned);
+    }
+    for (const [sym, nId] of Object.entries(prevEntry.symbols || {})) {
+      if (!symbolToNodeId.has(sym)) symbolToNodeId.set(sym, nId);
+    }
+    cachedFileEdges.set(file.relPath, prevEntry.outgoingEdges || []);
+    newFileIndex[file.relPath] = {
+      hash: prevEntry.hash,
+      nodes: prevEntry.nodes || [],
+      outgoingEdges: prevEntry.outgoingEdges || [],
+      symbols: prevEntry.symbols || {}
+    };
+  }
+
+  function finalizeDirtyFileTags(file, rawContent) {
+    let finalContent = rawContent;
+    let markedCount = 0;
+    if (markRead && hasPendingOrModifiedArchStatus(rawContent)) {
+      const flipped = markArchStatusAsRead(rawContent);
+      if (flipped.count > 0) {
+        try {
+          fs.writeFileSync(file.fullPath, flipped.updatedContent, 'utf8');
+          finalContent = flipped.updatedContent;
+          markedCount = flipped.count;
+          incrementalStats.tagsMarkedRead += markedCount;
+        } catch (e) {
+          // If filesystem is read-only, keep analyzing without failing
+        }
+      }
+    }
+    return { finalContent, finalHash: sha256(finalContent), markedCount };
+  }
+
   // 1. First pass: parse Database schemas (.prisma, .sql) and Markdown files (.md)
   for (const file of files) {
     let content = '';
@@ -162,13 +250,30 @@ function analyzeRepository(repoRoot) {
       continue;
     }
 
-    if (file.ext === '.prisma') {
-      parsePrismaSchema(content, file, addNode, addEdge, symbolToNodeId);
-      continue;
-    }
+    if (file.ext === '.prisma' || file.ext === '.sql') {
+      const rawHash = sha256(content);
+      const prevEntry = prevFileIndex[file.relPath];
+      const hasDirtyTag = hasPendingOrModifiedArchStatus(content);
+      const isCacheHit = Boolean(prevEntry && prevEntry.hash === rawHash && !hasDirtyTag && !forceFullScan);
 
-    if (file.ext === '.sql') {
-      parseSqlSchema(content, file, addNode, addEdge, symbolToNodeId);
+      if (isCacheHit) {
+        hydrateFromCache(file, prevEntry);
+        for (const cachedEdge of (prevEntry.outgoingEdges || [])) {
+          addEdge(cachedEdge.source, cachedEdge.target, cachedEdge.type, cachedEdge.label, cachedEdge.meta);
+        }
+        continue;
+      }
+
+      incrementalStats.analyzedFiles++;
+      dirtyFiles.add(file.relPath);
+      if (file.ext === '.prisma') {
+        parsePrismaSchema(content, file, addNode, addEdge, symbolToNodeId);
+      } else {
+        parseSqlSchema(content, file, addNode, addEdge, symbolToNodeId);
+      }
+
+      const { finalHash, markedCount } = finalizeDirtyFileTags(file, content);
+      fileContentsMap.set(file.relPath, { content, hash: finalHash, markedCount, hadPrev: Boolean(prevEntry) });
       continue;
     }
   }
@@ -184,13 +289,25 @@ function analyzeRepository(repoRoot) {
       continue;
     }
 
+    const moduleNodeId = `mod:${file.relPath}`;
+    fileToModuleNodeId.set(file.relPath, moduleNodeId);
+
+    const rawHash = sha256(content);
+    const prevEntry = prevFileIndex[file.relPath];
+    const hasDirtyTag = hasPendingOrModifiedArchStatus(content);
+    const isCacheHit = Boolean(prevEntry && prevEntry.hash === rawHash && !hasDirtyTag && !forceFullScan);
+
+    if (isCacheHit) {
+      hydrateFromCache(file, prevEntry);
+      continue;
+    }
+
+    incrementalStats.analyzedFiles++;
+    dirtyFiles.add(file.relPath);
+
     const isScreen = /(^|\/)(pages|app|screens|views)\//i.test(file.relPath) ||
       /(Page|Screen|View)\.(tsx|jsx|ts|js)$/i.test(file.name);
     const isComponentDir = /(^|\/)(components|ui|widgets|shared)\//i.test(file.relPath);
-
-    // Module node for every code file
-    const moduleNodeId = `mod:${file.relPath}`;
-    fileToModuleNodeId.set(file.relPath, moduleNodeId);
 
     // Parse Drizzle / TypeORM / SQLAlchemy / Entity Framework tables in code
     parseCodeORMs(content, file, addNode, addEdge, symbolToNodeId);
@@ -200,18 +317,57 @@ function analyzeRepository(repoRoot) {
 
     // Parse Exported Functions & React Components / Screens
     parseFunctionsAndUI(content, file, isScreen, isComponentDir, addNode, addEdge, symbolToNodeId, moduleNodeId);
+
+    const { finalHash, markedCount } = finalizeDirtyFileTags(file, content);
+    fileContentsMap.set(file.relPath, { content, hash: finalHash, markedCount, hadPrev: Boolean(prevEntry) });
   }
 
-  // 3. Third pass: resolve imports, function calls, OOP inheritance/composition & JSX component usage
+  // 3. Third pass: resolve relationships (skip re-parsing cached files; reuse their cached outgoing edges!)
   for (const file of codeFiles) {
-    let content = '';
-    try {
-      content = fs.readFileSync(file.fullPath, 'utf8');
-    } catch (e) {
+    if (!dirtyFiles.has(file.relPath)) {
+      const cachedEdges = cachedFileEdges.get(file.relPath) || [];
+      for (const ce of cachedEdges) {
+        if (nodesMap.has(ce.source) && nodesMap.has(ce.target)) {
+          addEdge(ce.source, ce.target, ce.type, ce.label, ce.meta);
+        }
+      }
       continue;
     }
+    const entry = fileContentsMap.get(file.relPath);
+    if (!entry) continue;
+    resolveRelationships(entry.content, file, codeFiles, nodesMap, addNode, addEdge, symbolToNodeId, fileToModuleNodeId);
+  }
 
-    resolveRelationships(content, file, codeFiles, nodesMap, addNode, addEdge, symbolToNodeId, fileToModuleNodeId);
+  // Update syncState & build incremental fileIndex for every dirty file
+  for (const relPath of dirtyFiles) {
+    const fInfo = fileContentsMap.get(relPath);
+    if (!fInfo) continue;
+    const fileNodes = Array.from(nodesMap.values()).filter(n => n.file === relPath);
+    const fileNodeIds = new Set(fileNodes.map(n => n.id));
+
+    for (const n of fileNodes) {
+      n.syncState = fInfo.hadPrev ? 'modified' : 'new';
+      if (n.details && n.details.archTag && fInfo.markedCount > 0) {
+        if (['pending', 'modified'].includes((n.details.archTag.status || '').toLowerCase())) {
+          n.details.archTag.previousStatus = n.details.archTag.status;
+          n.details.archTag.status = 'read';
+        }
+      }
+      incrementalStats.updatedNodeIds.push(n.id);
+    }
+
+    const fileOutgoingEdges = edges.filter(e => fileNodeIds.has(e.source));
+    const fileSymbols = {};
+    for (const [sym, nId] of symbolToNodeId.entries()) {
+      if (fileNodeIds.has(nId)) fileSymbols[sym] = nId;
+    }
+
+    newFileIndex[relPath] = {
+      hash: fInfo.hash,
+      nodes: fileNodes,
+      outgoingEdges: fileOutgoingEdges,
+      symbols: fileSymbols
+    };
   }
 
   // 4. Calculate node degrees, component reuse metrics & audit findings
@@ -273,6 +429,17 @@ function analyzeRepository(repoRoot) {
     repoName: path.basename(absRoot),
     repoPath: absRoot,
     generatedAt: new Date().toISOString(),
+    incremental: {
+      cachedFiles: incrementalStats.cachedFiles,
+      analyzedFiles: incrementalStats.analyzedFiles,
+      tagsMarkedRead: incrementalStats.tagsMarkedRead,
+      updatedNodeIds: incrementalStats.updatedNodeIds,
+      mode: incrementalStats.cachedFiles > 0 && incrementalStats.analyzedFiles === 0
+        ? 'full-cache-hit'
+        : incrementalStats.cachedFiles > 0
+          ? 'incremental'
+          : 'full-scan'
+    },
     counts: {
       totalFiles: files.length,
       tables: nodes.filter(n => n.category === 'database').length,
@@ -287,7 +454,7 @@ function analyzeRepository(repoRoot) {
     }
   };
 
-  return { summary, nodes, edges, markdownDocs, findings };
+  return { summary, nodes, edges, markdownDocs, findings, fileIndex: newFileIndex };
 }
 
 // ============================================================================
@@ -928,8 +1095,16 @@ function writeVisualizerOutput(absRepo, data) {
   const jsonPath = path.join(outDir, 'arch-data.json');
   fs.writeFileSync(jsonPath, JSON.stringify(data, null, 2), 'utf8');
 
+  // Keep browser payload lean (omit internal incremental fileIndex from arch-data.js)
+  const browserPayload = {
+    summary: data.summary,
+    nodes: data.nodes,
+    edges: data.edges,
+    markdownDocs: data.markdownDocs,
+    findings: data.findings
+  };
   const jsDataPath = path.join(outDir, 'arch-data.js');
-  fs.writeFileSync(jsDataPath, `window.__ARCH_DATA__ = ${JSON.stringify(data, null, 2)};\n`, 'utf8');
+  fs.writeFileSync(jsDataPath, `window.__ARCH_DATA__ = ${JSON.stringify(browserPayload, null, 2)};\n`, 'utf8');
 
   const resDir = path.join(__dirname, '..', 'resources');
   const assetFiles = [
@@ -953,7 +1128,9 @@ function writeVisualizerOutput(absRepo, data) {
 }
 
 function main() {
-  const targetRepo = process.argv[2] || process.cwd();
+  const args = process.argv.slice(2);
+  const flags = new Set(args.filter(a => a.startsWith('--')));
+  const targetRepo = args.find(a => !a.startsWith('--')) || process.cwd();
   const absRepo = path.resolve(targetRepo);
 
   if (!fs.existsSync(absRepo)) {
@@ -961,9 +1138,19 @@ function main() {
     process.exit(1);
   }
 
+  const options = {
+    markRead: !flags.has('--no-mark-read'),
+    forceFullScan: flags.has('--force')
+  };
+
   console.log(`[repo-visualizer] Analisando repositório: ${absRepo} ...`);
-  const data = analyzeRepository(absRepo);
+  const data = analyzeRepository(absRepo, options);
   writeVisualizerOutput(absRepo, data);
+
+  const inc = data.summary.incremental;
+  if (inc) {
+    console.log(`⚡ [Incremental] Modo: ${inc.mode} | Cache Hit (read): ${inc.cachedFiles} arq(s) | Analisados: ${inc.analyzedFiles} arq(s) | Tags marcadas como read: ${inc.tagsMarkedRead}`);
+  }
   console.log(`[repo-visualizer] Resumo da extração:`, JSON.stringify(data.summary.counts, null, 2));
 }
 

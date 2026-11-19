@@ -1,6 +1,6 @@
 {
   "name": "repo-visualizer-skill",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "AI Agent Skill & Modular Interactive Web Dashboard for Visual Code Auditing, C4 Model Architecture Generator (C1-C4), ER Database Diagrams (DER), UML Class Diagrams, UI Component Reuse Tracking, and arc42 Documentation (Markdown + PDF Export).",
   "license": "MIT",
   "bin": {
