@@ -1,7 +1,7 @@
-# 🗺️ Repo Visualizer & AI Code Auditor (`repo-visualizer` v1.2.0)
+# 🗺️ Repo Visualizer & AI Code Auditor (`repo-visualizer` v1.3.0)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
-[![Version: 1.2.0](https://img.shields.io/badge/Version-1.2.0-cyan.svg)](./package.json)
+[![Version: 1.3.0](https://img.shields.io/badge/Version-1.3.0-cyan.svg)](./package.json)
 [![Zero Dependencies](https://img.shields.io/badge/Dependencies-Zero-emerald.svg)](#)
 [![C4 Model + arc42](https://img.shields.io/badge/Architecture-C4_Model_%2B_arc42-amber.svg)](./references/c4-model-knowledge-base.md)
 [![Agent Skill](https://img.shields.io/badge/Format-SKILL.md-purple.svg)](./SKILL.md)
@@ -11,8 +11,12 @@ O `repo-visualizer` é uma **Skill Open Source para Agentes de IA** (Google Anti
 
 ---
 
-## 🆕 Novidades das Versões 1.1.0 e 1.2.0
+## 🆕 Novidades das Versões 1.1.0 – 1.3.0
 
+- **⚖️ Auditoria de Eixo Duplo (*Dual-Axis*) na Aba 6 + Detector de *Deep Modules* (v1.3.0):**
+  - Inspirada em revisões isoladas de alta disciplina, a **Aba 6** agora separa os alertas em dois placares independentes que nunca se misturam:
+    - **🏛️ EIXO 1 — Saúde Estrutural:** Encapsulamento OOP, Alto Acoplamento, Violações de Camada C3 (Tela $\rightarrow$ Banco), *Deep Modules* (*Teste de Deleção* de John Ousterhout) e Componentes UI sem uso.
+    - **🏷️ EIXO 2 — Aderência Semântica (`@arch` vs. Código Real):** Cobertura de tags `@arch:*`, *Role Drift* (tag contradizendo o código real) e adaptadores externos sem `@arch:external`.
 - **⚡ Motor de Análise Incremental com `@arch:status` (`pending` / `modified` $\rightarrow$ `read`) + Hash SHA-256 (v1.2.0):**
   - Integração bidirecional com a skill [`repo-builder`](https://github.com/Leo-Cavalli/repo-builder): arquivos já marcados como `@arch:status read` (e cujo hash SHA-256 não mudou) são **reaproveitados direto do cache em `0ms`** sem re-parsing!
   - Quando novos elementos (`pending`) ou alterações/novas conexões (`modified`) são detectados, o `repo-visualizer` reanalisa **apenas os arquivos alterados**, atualiza o `arch-data.json` e **marca automaticamente a tag no código-fonte como `@arch:status read`** (use `--no-mark-read` para desativar a escrita da tag ou `--force` para forçar varredura completa).

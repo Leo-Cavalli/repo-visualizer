@@ -1443,42 +1443,83 @@ function downloadSelectedDocsMarkdown() {
 }
 
 // ============================================================================
-// TAB 6: HUMAN AUDIT & FINDINGS
+// TAB 6: DUAL-AXIS HUMAN AUDIT & FINDINGS (STRUCTURAL vs. SEMANTIC @arch)
 // ============================================================================
 
 function renderAuditTab() {
   const container = document.getElementById('audit-cards-grid');
   const findings = state.data.findings || [];
 
+  const structuralFindings = findings.filter((f) => f.axis !== 'semantic');
+  const semanticFindings = findings.filter((f) => f.axis === 'semantic');
+
   const checklistCard = `
-    <div class="entity-card">
+    <div class="entity-card" style="grid-column: 1 / -1;">
       <div class="entity-card-header">
-        <strong>✅ Checklist de Validação Humana sobre IA</strong>
+        <strong>✅ Checklist de Validação Humana sobre IA (Dual-Axis + Deep Modules)</strong>
         <span class="badge badge-component">Governança</span>
       </div>
       <div class="entity-card-body">
         <label style="display:flex; gap:8px; align-items:center;"><input type="checkbox"/> Os limites de Contexto (C1) e Contêineres (C2) refletem a arquitetura desejada?</label>
         <label style="display:flex; gap:8px; align-items:center;"><input type="checkbox"/> Todas as tabelas novas possuem chaves estrangeiras no DER (Aba 2)?</label>
         <label style="display:flex; gap:8px; align-items:center;"><input type="checkbox"/> Atributos sensíveis das classes estão encapsulados como <code>private</code>/<code>protected</code> no UML (Aba 3)?</label>
+        <label style="display:flex; gap:8px; align-items:center;"><input type="checkbox"/> As classes novas passam no <strong>Teste de Deleção (Deep Modules)</strong> sem criar wrappers rasos desnecessários?</label>
+        <label style="display:flex; gap:8px; align-items:center;"><input type="checkbox"/> Decisões difíceis de reverter com trade-offs reais foram registradas como ADR no arc42 (Cap. 09)?</label>
         <label style="display:flex; gap:8px; align-items:center;"><input type="checkbox"/> Componentes de UI existentes foram reutilizados em vez de duplicados pela IA?</label>
       </div>
     </div>
   `;
 
-  const findingCards = findings.map((f) => `
-    <div class="entity-card">
-      <div class="entity-card-header">
-        <strong>⚠️ ${escapeHtml(f.category)}: ${escapeHtml(f.target)}</strong>
-        <span class="badge badge-db">${escapeHtml(f.severity.toUpperCase())}</span>
-      </div>
-      <div class="entity-card-body">
-        <div class="file-loc">📍 ${escapeHtml(f.file)}:${f.line}</div>
-        <p>${escapeHtml(f.message)}</p>
-      </div>
-    </div>
-  `).join('');
+  const renderAxisBlock = (title, subtitle, badgeColor, items) => {
+    const errs = items.filter((i) => i.severity === 'error').length;
+    const warns = items.filter((i) => i.severity === 'warning').length;
+    const infos = items.filter((i) => i.severity === 'info').length;
+    const statusText = errs > 0 ? `❌ ${errs} erro(s)` : warns > 0 ? `⚠️ ${warns} aviso(s)` : items.length > 0 ? `ℹ️ ${infos} info(s)` : '✅ 100% Saudável';
 
-  container.innerHTML = checklistCard + (findingCards || `<div class="entity-card"><div class="entity-card-header"><strong>🎉 Nenhum alerta crítico detectado</strong></div></div>`);
+    const itemsHtml = items.length === 0
+      ? `<div style="padding:12px; color:#34d399; font-size:13px;">🎉 Nenhum apontamento detectado neste eixo!</div>`
+      : items.map((f) => `
+          <div style="border-top:1px solid var(--border); padding-top:10px; margin-top:10px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:4px;">
+              <strong>${f.severity === 'error' ? '❌' : f.severity === 'warning' ? '⚠️' : 'ℹ️'} ${escapeHtml(f.category)}: ${escapeHtml(f.target)}</strong>
+              <span class="badge ${f.severity === 'error' ? 'badge-db' : 'badge-class'}">${escapeHtml(f.severity.toUpperCase())}</span>
+            </div>
+            <div class="file-loc" style="margin-bottom:4px;">📍 ${escapeHtml(f.file)}:${f.line}</div>
+            <p style="font-size:12.5px; color:var(--text-muted); margin:0;">${escapeHtml(f.message)}</p>
+          </div>
+        `).join('');
+
+    return `
+      <div class="entity-card" style="border-top: 3px solid ${badgeColor};">
+        <div class="entity-card-header">
+          <div>
+            <strong>${title}</strong>
+            <div style="font-size:11px; color:var(--text-muted); margin-top:2px;">${subtitle}</div>
+          </div>
+          <span class="badge badge-screen" style="white-space:nowrap;">${statusText}</span>
+        </div>
+        <div class="entity-card-body">
+          ${itemsHtml}
+        </div>
+      </div>
+    `;
+  };
+
+  const axis1Card = renderAxisBlock(
+    '🏛️ EIXO 1 — Saúde Estrutural',
+    'Clean Architecture, Camadas C3, Encapsulamento OOP, Deep Modules & Reuso UI (Placar Isolado)',
+    '#f59e0b',
+    structuralFindings
+  );
+
+  const axis2Card = renderAxisBlock(
+    '🏷️ EIXO 2 — Aderência Semântica (@arch)',
+    'Fidelidade entre as tags @arch:* (repo-builder) e o código real (Role Drift & Cobertura)',
+    '#38bdf8',
+    semanticFindings
+  );
+
+  container.innerHTML = checklistCard + axis1Card + axis2Card;
 }
 
 // ============================================================================

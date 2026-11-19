@@ -274,10 +274,19 @@
 
     const nodes = Array.from(nodesMap.values());
     for (const n of nodes) {
+      const arch = n.details && n.details.archTag;
+
+      // AXIS 1: Structural Health
       if (n.category === 'class') {
-        const pubFields = ((n.details && n.details.members) || []).filter((m) => m.kind === 'field' && m.visibility === 'public');
+        const members = (n.details && n.details.members) || [];
+        const pubFields = members.filter((m) => m.kind === 'field' && m.visibility === 'public');
+        const encFields = members.filter((m) => m.kind === 'field' && (m.visibility === 'private' || m.visibility === 'protected'));
+        const methods = members.filter((m) => m.kind === 'method');
+        const isAbstract = n.subType && n.subType.includes('abstract');
+        const hasImpl = n.details && n.details.implements && n.details.implements.length > 0;
         if (pubFields.length >= 3) {
           findings.push({
+            axis: 'structural',
             severity: 'warning',
             category: 'Encapsulamento OOP',
             target: n.label,
@@ -286,9 +295,21 @@
             message: `A classe '${n.label}' expõe ${pubFields.length} atributos públicos diretamente. Considere encapsular com private/protected.`
           });
         }
+        if (!isAbstract && !hasImpl && encFields.length === 0 && methods.length <= 1) {
+          findings.push({
+            axis: 'structural',
+            severity: 'info',
+            category: 'Deep Modules (Teste de Deleção)',
+            target: n.label,
+            file: n.file,
+            line: n.line,
+            message: `A classe '${n.label}' não possui estado encapsulado e tem <= 1 método. Avalie pelo Teste de Deleção (Ousterhout) se é um Módulo Raso.`
+          });
+        }
       }
       if (n.category === 'component' && n.metrics.reuseCount === 0) {
         findings.push({
+          axis: 'structural',
           severity: 'info',
           category: 'Componente UI Sem Uso Detectado',
           target: n.label,
@@ -296,6 +317,41 @@
           line: n.line,
           message: `O componente '<${n.label} />' foi criado em ${n.file}, mas não está sendo renderizado em nenhuma tela.`
         });
+      }
+
+      // AXIS 2: Semantic Compliance (@arch vs. Actual Code)
+      if (['class', 'interface', 'screen', 'database'].includes(n.category)) {
+        if (!arch) {
+          findings.push({
+            axis: 'semantic',
+            severity: 'info',
+            category: 'Cobertura @arch Ausente',
+            target: n.label,
+            file: n.file,
+            line: n.line,
+            message: `'${n.label}' (${n.category}) não possui anotação '@arch:*' do repo-builder.`
+          });
+        } else if (n.category === 'class' && arch.role === 'interface') {
+          findings.push({
+            axis: 'semantic',
+            severity: 'warning',
+            category: 'Drift @arch:role vs Código',
+            target: n.label,
+            file: n.file,
+            line: n.line,
+            message: `Classe concreta '${n.label}' foi anotada como '@arch:role interface'.`
+          });
+        } else if (n.category === 'class' && (arch.role === 'adapter' || /(stripe|sendgrid|openai|aws|gateway)/i.test(n.label)) && !arch.external) {
+          findings.push({
+            axis: 'semantic',
+            severity: 'warning',
+            category: 'Sistema Externo Oculto (@arch:external)',
+            target: n.label,
+            file: n.file,
+            line: n.line,
+            message: `O adaptador '${n.label}' não declara '@arch:external' para aparecer no C4 C1/C2.`
+          });
+        }
       }
     }
 

@@ -383,13 +383,22 @@ function analyzeRepository(repoRoot, options = {}) {
     }
   }
 
-  // Generate automated AI Code Audit findings
+  // Generate Dual-Axis AI Code Audit findings (Axis 1: Structural | Axis 2: Semantic @arch)
   for (const node of nodesMap.values()) {
+    const arch = node.details && node.details.archTag;
+
+    // ── AXIS 1: STRUCTURAL HEALTH (Clean Architecture, Deep Modules & SOLID) ──
     if (node.category === 'class') {
       const members = (node.details && node.details.members) || [];
       const publicFields = members.filter(m => m.kind === 'field' && m.visibility === 'public');
+      const encapsulatedFields = members.filter(m => m.kind === 'field' && (m.visibility === 'private' || m.visibility === 'protected'));
+      const methods = members.filter(m => m.kind === 'method');
+      const isAbstract = node.subType && node.subType.includes('abstract');
+      const hasImplements = (node.details && node.details.implements && node.details.implements.length > 0);
+
       if (publicFields.length >= 3) {
         findings.push({
+          axis: 'structural',
           severity: 'warning',
           category: 'Encapsulamento OOP',
           target: node.label,
@@ -400,6 +409,7 @@ function analyzeRepository(repoRoot, options = {}) {
       }
       if (node.metrics.outDegree > 8) {
         findings.push({
+          axis: 'structural',
           severity: 'warning',
           category: 'Alto Acoplamento',
           target: node.label,
@@ -408,9 +418,37 @@ function analyzeRepository(repoRoot, options = {}) {
           message: `A classe '${node.label}' depende de ${node.metrics.outDegree} outros elementos. Avalie aplicar Inversão de Dependência (SOLID) ou dividir responsabilidades.`
         });
       }
+      if (!isAbstract && !hasImplements && encapsulatedFields.length === 0 && methods.length <= 1) {
+        findings.push({
+          axis: 'structural',
+          severity: 'info',
+          category: 'Deep Modules (Teste de Deleção)',
+          target: node.label,
+          file: node.file,
+          line: node.line,
+          message: `A classe '${node.label}' não possui estado encapsulado e tem <= 1 método. Avalie pelo Teste de Deleção (Ousterhout) se é um Módulo Raso desnecessário.`
+        });
+      }
     }
+
+    if (node.category === 'screen') {
+      const directDbQuery = edges.find(e => e.source === node.id && e.type === 'queries');
+      if (directDbQuery) {
+        findings.push({
+          axis: 'structural',
+          severity: 'error',
+          category: 'Violação de Camada C3',
+          target: node.label,
+          file: node.file,
+          line: node.line,
+          message: `A Tela '${node.label}' (Tier 1) consulta o Banco de Dados diretamente (${directDbQuery.label}). Encapsule em um Domain Service (Tier 3).`
+        });
+      }
+    }
+
     if (node.category === 'component' && node.metrics.reuseCount === 0) {
       findings.push({
+        axis: 'structural',
         severity: 'info',
         category: 'Componente UI Sem Uso Detectado',
         target: node.label,
@@ -418,6 +456,66 @@ function analyzeRepository(repoRoot, options = {}) {
         line: node.line,
         message: `O componente '<${node.label} />' foi criado em ${node.file}, mas não está sendo renderizado em nenhuma tela ou componente.`
       });
+    }
+
+    // ── AXIS 2: SEMANTIC COMPLIANCE (@arch vs. Actual Code) ──
+    if (['class', 'interface', 'screen', 'database'].includes(node.category)) {
+      if (!arch) {
+        findings.push({
+          axis: 'semantic',
+          severity: 'info',
+          category: 'Cobertura @arch Ausente',
+          target: node.label,
+          file: node.file,
+          line: node.line,
+          message: `'${node.label}' (${node.category}) não possui anotação '@arch:*' do repo-builder, exigindo inferência por regex.`
+        });
+      } else {
+        if (node.category === 'interface' && arch.role && !['interface', 'contract'].includes(arch.role)) {
+          findings.push({
+            axis: 'semantic',
+            severity: 'warning',
+            category: 'Drift @arch:role vs Código',
+            target: node.label,
+            file: node.file,
+            line: node.line,
+            message: `Interface '${node.label}' foi anotada como '@arch:role ${arch.role}', mas o código declara uma interface.`
+          });
+        }
+        if (node.category === 'class' && arch.role === 'interface') {
+          findings.push({
+            axis: 'semantic',
+            severity: 'warning',
+            category: 'Drift @arch:role vs Código',
+            target: node.label,
+            file: node.file,
+            line: node.line,
+            message: `Classe concreta '${node.label}' foi anotada como '@arch:role interface'. Corrija para 'service' ou 'adapter'.`
+          });
+        }
+        if (node.category === 'database' && arch.role && !['table', 'entity'].includes(arch.role)) {
+          findings.push({
+            axis: 'semantic',
+            severity: 'warning',
+            category: 'Drift @arch:role vs Código',
+            target: node.label,
+            file: node.file,
+            line: node.line,
+            message: `Tabela '${node.label}' foi anotada como '@arch:role ${arch.role}', mas deveria ser 'table'.`
+          });
+        }
+        if (node.category === 'class' && (arch.role === 'adapter' || /(stripe|sendgrid|openai|aws|gateway)/i.test(node.label)) && !arch.external) {
+          findings.push({
+            axis: 'semantic',
+            severity: 'warning',
+            category: 'Sistema Externo Oculto (@arch:external)',
+            target: node.label,
+            file: node.file,
+            line: node.line,
+            message: `O adaptador '${node.label}' integra serviço externo, mas não declara '@arch:external' para aparecer automaticamente nos diagramas C1/C2.`
+          });
+        }
+      }
     }
   }
 
@@ -450,7 +548,9 @@ function analyzeRepository(repoRoot, options = {}) {
       modules: nodes.filter(n => n.category === 'module').length,
       edges: edges.length,
       docs: markdownDocs.length,
-      findings: findings.length
+      findings: findings.length,
+      structuralFindings: findings.filter(f => f.axis === 'structural').length,
+      semanticFindings: findings.filter(f => f.axis === 'semantic').length
     }
   };
 
